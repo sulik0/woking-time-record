@@ -7,6 +7,21 @@ export interface ParsedDingTalkRecord {
   warnings: string[]
 }
 
+// 钉钉统计页面识别结果
+export interface ParsedDingTalkStats {
+  year: number
+  month: number
+  avgHours: number        // 钉钉显示的平均工时
+  attendanceDays: number  // 出勤天数
+  restDays: number        // 休息天数
+  totalHours: number      // 计算出的总工时
+  workdays: number        // 工作日天数（计算得出）
+  correctAvgHours: number // 正确的平均工时（按工作日计算）
+  weekendWorkDays: number // 周末加班天数
+  isValid: boolean
+  warnings: string[]
+}
+
 const REPLACEMENTS: Record<string, string> = {
   O: '0',
   o: '0',
@@ -108,6 +123,104 @@ export function parseDingTalkText(text: string, referenceDate = new Date()): Par
     endTime,
     times: uniqueTimes,
     isValid: Boolean(startTime && endTime),
+    warnings
+  }
+}
+
+/**
+ * 解析钉钉统计页面的 OCR 文本
+ * 提取平均工时、出勤天数、休息天数等信息
+ * 并计算正确的平均工时（按工作日计算）
+ */
+export function parseDingTalkStatsText(text: string, workdaysInMonth: number): ParsedDingTalkStats {
+  const warnings: string[] = []
+  const normalized = text.replace(/\s+/g, ' ')
+  
+  // 提取年份和月份
+  let year = new Date().getFullYear()
+  let month = new Date().getMonth() + 1
+  
+  const yearMonthMatch = normalized.match(/(\d{4})\s*[\u5e74]?\s*(\d{1,2})\s*月/)
+  if (yearMonthMatch) {
+    year = Number(yearMonthMatch[1])
+    month = Number(yearMonthMatch[2])
+  } else {
+    const monthMatch = normalized.match(/(\d{1,2})\s*月/)
+    if (monthMatch) {
+      month = Number(monthMatch[1])
+    }
+  }
+  
+  // 提取平均工时（支持小数）
+  let avgHours = 0
+  const avgHoursMatch = normalized.match(/(\d+\.?\d*)\s*平均工时/)
+  if (avgHoursMatch) {
+    avgHours = parseFloat(avgHoursMatch[1])
+  } else {
+    // 尝试另一种格式：平均工时 后面跟数字
+    const avgMatch2 = normalized.match(/平均工时\s*(\d+\.?\d*)/)
+    if (avgMatch2) {
+      avgHours = parseFloat(avgMatch2[1])
+    }
+  }
+  
+  // 提取出勤天数
+  let attendanceDays = 0
+  const attendanceMatch = normalized.match(/(\d+)\s*出勤天数/)
+  if (attendanceMatch) {
+    attendanceDays = Number(attendanceMatch[1])
+  } else {
+    const attendMatch2 = normalized.match(/出勤天数\s*(\d+)/)
+    if (attendMatch2) {
+      attendanceDays = Number(attendMatch2[1])
+    }
+  }
+  
+  // 提取休息天数
+  let restDays = 0
+  const restMatch = normalized.match(/(\d+)\s*休息天数/)
+  if (restMatch) {
+    restDays = Number(restMatch[1])
+  } else {
+    const restMatch2 = normalized.match(/休息天数\s*(\d+)/)
+    if (restMatch2) {
+      restDays = Number(restMatch2[1])
+    }
+  }
+  
+  // 计算总工时（钉钉显示的平均工时 × 出勤天数）
+  const totalHours = avgHours * attendanceDays
+  
+  // 使用传入的工作日天数
+  const workdays = workdaysInMonth
+  
+  // 计算周末加班天数
+  const weekendWorkDays = Math.max(0, attendanceDays - workdays)
+  
+  // 计算正确的平均工时（总工时 / 工作日天数）
+  const correctAvgHours = workdays > 0 ? totalHours / workdays : 0
+  
+  // 验证数据
+  if (avgHours === 0) {
+    warnings.push('未识别到平均工时')
+  }
+  if (attendanceDays === 0) {
+    warnings.push('未识别到出勤天数')
+  }
+  
+  const isValid = avgHours > 0 && attendanceDays > 0
+  
+  return {
+    year,
+    month,
+    avgHours,
+    attendanceDays,
+    restDays,
+    totalHours,
+    workdays,
+    correctAvgHours,
+    weekendWorkDays,
+    isValid,
     warnings
   }
 }

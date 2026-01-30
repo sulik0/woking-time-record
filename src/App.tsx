@@ -13,7 +13,8 @@ import {
   Upload,
   Sparkles,
   FileImage,
-  X
+  X,
+  BarChart3
 } from 'lucide-react'
 import {
   TimeRecord,
@@ -31,7 +32,7 @@ import {
   loadRecords,
   filterCurrentMonthRecords
 } from './utils/timeUtils'
-import { parseDingTalkText, ParsedDingTalkRecord } from './utils/ocrUtils'
+import { parseDingTalkText, ParsedDingTalkRecord, parseDingTalkStatsText, ParsedDingTalkStats } from './utils/ocrUtils'
 
 type OcrStatus = 'idle' | 'loading' | 'success' | 'error'
 
@@ -56,6 +57,12 @@ function App() {
   })
   const [ocrItems, setOcrItems] = useState<OcrItem[]>([])
   const ocrItemsRef = useRef<OcrItem[]>([])
+  const [statsResult, setStatsResult] = useState<ParsedDingTalkStats | null>(null)
+  const [statsOcrStatus, setStatsOcrStatus] = useState<OcrStatus>('idle')
+  const [statsOcrMessage, setStatsOcrMessage] = useState('')
+  const [statsPreviewUrl, setStatsPreviewUrl] = useState<string | null>(null)
+  const [manualAvgHours, setManualAvgHours] = useState('')
+  const [manualAttendanceDays, setManualAttendanceDays] = useState('')
 
   // 加载本地数据
   useEffect(() => {
@@ -112,7 +119,7 @@ function App() {
 
   // 添加记录
   const addRecord = (date: string, startTime: string, endTime: string) => {
-    const type = isDateWeekend(date) ? 'weekend' : 'workday'
+    const type = isDateWeekend(date) ? 'holiday' : 'workday'
     const workedMinutes = calculateWorkedMinutes(startTime, endTime)
     const overtimeMinutes = calculateOvertimeMinutes(workedMinutes, type)
 
@@ -272,6 +279,90 @@ function App() {
   const handleSaveParsed = (parsed: ParsedDingTalkRecord | null) => {
     if (!parsed || !parsed.isValid) return
     addRecord(parsed.date, parsed.startTime, parsed.endTime)
+  }
+
+  // 统计页面 OCR 识别
+  const handleStatsFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    
+    // 释放旧的预览 URL
+    if (statsPreviewUrl) {
+      URL.revokeObjectURL(statsPreviewUrl)
+    }
+    
+    setStatsPreviewUrl(URL.createObjectURL(file))
+    setStatsResult(null)
+    setStatsOcrStatus('idle')
+    setStatsOcrMessage('已选择图片，点击“识别统计”开始')
+    event.target.value = ''
+  }
+
+  const handleStatsRecognize = async () => {
+    if (!statsPreviewUrl) return
+    
+    setStatsOcrStatus('loading')
+    setStatsOcrMessage('正在加载 OCR 引擎...')
+    
+    let worker: any = null
+    
+    try {
+      const { createWorker } = await import('tesseract.js')
+      
+      // 创建 worker
+      worker = await createWorker()
+      
+      setStatsOcrMessage('加载识别模型...')
+      try {
+        await worker.loadLanguage('chi_sim+eng')
+        await worker.initialize('chi_sim+eng')
+      } catch {
+        await worker.loadLanguage('eng')
+        await worker.initialize('eng')
+      }
+      
+      setStatsOcrMessage('识别中...')
+      const response = await fetch(statsPreviewUrl)
+      const blob = await response.blob()
+      const { data } = await worker.recognize(blob)
+      
+      const text = data?.text ?? ''
+      console.log('OCR 识别结果:', text)
+      const parsed = parseDingTalkStatsText(text, stats.workdays)
+      
+      setStatsResult(parsed)
+      setStatsOcrStatus(parsed.isValid ? 'success' : 'error')
+      setStatsOcrMessage(parsed.isValid ? '识别完成' : '识别失败，请手动输入')
+    } catch (error) {
+      console.error('OCR 错误:', error)
+      setStatsOcrStatus('error')
+      setStatsOcrMessage('识别失败，请手动输入数据')
+    } finally {
+      if (worker) {
+        await worker.terminate()
+      }
+    }
+  }
+
+  // 手动输入统计数据
+  const handleManualStatsInput = (avgHours: number, attendanceDays: number) => {
+    const totalHours = avgHours * attendanceDays
+    const weekendWorkDays = Math.max(0, attendanceDays - stats.workdays)
+    const correctAvgHours = stats.workdays > 0 ? totalHours / stats.workdays : 0
+    
+    setStatsResult({
+      year: currentDate.getFullYear(),
+      month: currentDate.getMonth() + 1,
+      avgHours,
+      attendanceDays,
+      restDays: 0,
+      totalHours,
+      workdays: stats.workdays,
+      correctAvgHours,
+      weekendWorkDays,
+      isValid: true,
+      warnings: []
+    })
   }
 
   return (
@@ -485,6 +576,138 @@ function App() {
           )}
         </section>
 
+        {/* 统计页面识别 */}
+        <section className="card p-6 animate-slide-up">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-foreground">钉钉统计页面识别</h2>
+            </div>
+            <span className="text-sm text-muted-foreground">计算正确的平均工时（按工作日计算）</span>
+          </div>
+
+          <div className="flex flex-col md:flex-row md:items-center gap-3 mb-4">
+            <input
+              id="stats-upload"
+              type="file"
+              accept="image/*"
+              onChange={handleStatsFileChange}
+              className="sr-only"
+            />
+            <label htmlFor="stats-upload" className="btn-secondary flex items-center justify-center gap-2">
+              <Upload className="w-4 h-4" />
+              选择统计截图
+            </label>
+            <button
+              onClick={handleStatsRecognize}
+              className="btn-primary flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={!statsPreviewUrl || statsOcrStatus === 'loading'}
+            >
+              <Sparkles className="w-4 h-4" />
+              识别统计
+            </button>
+            {statsOcrMessage && (
+              <span className="text-sm text-muted-foreground">{statsOcrMessage}</span>
+            )}
+          </div>
+
+          {/* 手动输入 */}
+          <div className="mb-4 p-4 bg-muted/30 rounded-lg">
+            <p className="text-sm text-muted-foreground mb-3">或手动输入钉钉显示的数据：</p>
+            <div className="flex flex-col md:flex-row gap-3">
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-muted-foreground whitespace-nowrap">平均工时</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="9.43"
+                  className="input-field w-24"
+                  value={manualAvgHours}
+                  onChange={(e) => setManualAvgHours(e.target.value)}
+                />
+                <span className="text-sm text-muted-foreground">小时</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-muted-foreground whitespace-nowrap">出勤天数</label>
+                <input
+                  type="number"
+                  placeholder="23"
+                  className="input-field w-20"
+                  value={manualAttendanceDays}
+                  onChange={(e) => setManualAttendanceDays(e.target.value)}
+                />
+                <span className="text-sm text-muted-foreground">天</span>
+              </div>
+              <button
+                onClick={() => {
+                  const avg = parseFloat(manualAvgHours || '0')
+                  const days = parseInt(manualAttendanceDays || '0')
+                  if (avg > 0 && days > 0) {
+                    handleManualStatsInput(avg, days)
+                  }
+                }}
+                className="btn-secondary"
+              >
+                计算
+              </button>
+            </div>
+          </div>
+
+          {/* 预览图片 */}
+          {statsPreviewUrl && (
+            <div className="mb-4">
+              <img
+                src={statsPreviewUrl}
+                alt="钉钉统计页面截图"
+                className="max-w-xs rounded-lg border border-border"
+              />
+            </div>
+          )}
+
+          {/* 结果显示 */}
+          {statsResult && (
+            <div className="rounded-lg border border-border p-4 bg-gradient-to-r from-primary/5 to-transparent">
+              <h3 className="font-medium text-foreground mb-3">工时统计结果</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">钉钉平均工时</p>
+                  <p className="text-xl font-bold text-foreground">{statsResult.avgHours.toFixed(2)}h</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">出勤天数</p>
+                  <p className="text-xl font-bold text-foreground">{statsResult.attendanceDays}天</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">工作日天数</p>
+                  <p className="text-xl font-bold text-foreground">{statsResult.workdays}天</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">周末加班</p>
+                  <p className="text-xl font-bold text-primary">{statsResult.weekendWorkDays}天</p>
+                </div>
+              </div>
+              
+              <div className="p-4 bg-primary/10 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-muted-foreground">总工时</span>
+                  <span className="font-medium">{statsResult.totalHours.toFixed(2)} 小时</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-foreground">正确的平均工时（按{statsResult.workdays}工作日计算）</span>
+                  <span className="text-2xl font-bold text-primary">{statsResult.correctAvgHours.toFixed(2)}h</span>
+                </div>
+              </div>
+              
+              {statsResult.avgHours !== statsResult.correctAvgHours && (
+                <p className="mt-3 text-sm text-warning">
+                  提示：钉钉按{statsResult.attendanceDays}天计算平均工时为 {statsResult.avgHours.toFixed(2)}h，
+                  正确的应按{statsResult.workdays}工作日计算为 <strong>{statsResult.correctAvgHours.toFixed(2)}h</strong>
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
         {/* 录入表单 */}
         <section className="card p-6 animate-slide-up">
           <h2 className="font-semibold text-foreground mb-4">录入打卡记录</h2>
@@ -533,7 +756,7 @@ function App() {
             <div className="mt-4 p-4 bg-muted/50 rounded-lg">
               <div className="flex items-center gap-4 text-sm">
                 <span className={isDateWeekend(formData.date) ? 'badge-primary' : 'badge-success'}>
-                  {isDateWeekend(formData.date) ? '周末' : '工作日'}
+                  {isDateWeekend(formData.date) ? '休息日' : '工作日'}
                 </span>
                 <span className="text-muted-foreground">
                   工作时长：{formatMinutesToHours(calculateWorkedMinutes(formData.startTime, formData.endTime))}
@@ -542,7 +765,7 @@ function App() {
                   加班时长：{formatMinutesToHours(
                     calculateOvertimeMinutes(
                       calculateWorkedMinutes(formData.startTime, formData.endTime),
-                      isDateWeekend(formData.date) ? 'weekend' : 'workday'
+                      isDateWeekend(formData.date) ? 'holiday' : 'workday'
                     )
                   )}
                 </span>
@@ -587,8 +810,8 @@ function App() {
                   
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <span className={record.type === 'weekend' ? 'badge-primary' : 'badge-success'}>
-                        {record.type === 'weekend' ? '周末' : '工作日'}
+                      <span className={record.type === 'holiday' ? 'badge-primary' : 'badge-success'}>
+                        {record.type === 'holiday' ? '休息日' : '工作日'}
                       </span>
                       <p className="text-sm text-muted-foreground mt-1">
                         加班 <span className="text-primary font-medium">{formatMinutesToHours(record.overtimeMinutes)}</span>
