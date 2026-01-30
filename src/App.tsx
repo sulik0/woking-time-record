@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type ChangeEvent } from 'react'
+import { useState, useEffect, useMemo, useRef, type ChangeEvent } from 'react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { 
@@ -9,7 +9,11 @@ import {
   TrendingUp,
   Target,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  ImageUp,
+  Sparkles,
+  FileImage,
+  X
 } from 'lucide-react'
 import {
   TimeRecord,
@@ -29,6 +33,19 @@ import {
 } from './utils/timeUtils'
 import { parseDingTalkText, ParsedDingTalkRecord } from './utils/ocrUtils'
 
+type OcrStatus = 'idle' | 'loading' | 'success' | 'error'
+
+interface OcrItem {
+  id: string
+  file: File
+  previewUrl: string
+  status: OcrStatus
+  message: string
+  progress: number | null
+  parsed: ParsedDingTalkRecord | null
+  text: string
+}
+
 function App() {
   const [records, setRecords] = useState<TimeRecord[]>([])
   const [currentDate] = useState(new Date())
@@ -37,13 +54,8 @@ function App() {
     startTime: '09:00',
     endTime: '18:00'
   })
-  const [ocrFile, setOcrFile] = useState<File | null>(null)
-  const [ocrPreviewUrl, setOcrPreviewUrl] = useState<string | null>(null)
-  const [ocrStatus, setOcrStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [ocrMessage, setOcrMessage] = useState('')
-  const [ocrProgress, setOcrProgress] = useState<number | null>(null)
-  const [ocrParsed, setOcrParsed] = useState<ParsedDingTalkRecord | null>(null)
-  const [ocrText, setOcrText] = useState('')
+  const [ocrItems, setOcrItems] = useState<OcrItem[]>([])
+  const ocrItemsRef = useRef<OcrItem[]>([])
 
   // 加载本地数据
   useEffect(() => {
@@ -55,14 +67,16 @@ function App() {
     saveRecords(records)
   }, [records])
 
+  useEffect(() => {
+    ocrItemsRef.current = ocrItems
+  }, [ocrItems])
+
   // 释放预览 URL
   useEffect(() => {
     return () => {
-      if (ocrPreviewUrl) {
-        URL.revokeObjectURL(ocrPreviewUrl)
-      }
+      ocrItemsRef.current.forEach(item => URL.revokeObjectURL(item.previewUrl))
     }
-  }, [ocrPreviewUrl])
+  }, [])
 
   // 计算统计数据
   const stats = useMemo(() => {
@@ -132,84 +146,132 @@ function App() {
     setRecords(prev => prev.filter(r => r.id !== id))
   }
 
-  const handleOcrFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null
-    setOcrFile(file)
-    setOcrParsed(null)
-    setOcrText('')
-    setOcrStatus('idle')
-    setOcrMessage('')
-    setOcrProgress(null)
-
-    if (ocrPreviewUrl) {
-      URL.revokeObjectURL(ocrPreviewUrl)
-    }
-
-    if (file) {
-      setOcrPreviewUrl(URL.createObjectURL(file))
-    } else {
-      setOcrPreviewUrl(null)
-    }
+  const handleOcrFilesChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    if (files.length === 0) return
+    const newItems: OcrItem[] = files.map(file => ({
+      id: generateId(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: 'idle',
+      message: '等待识别',
+      progress: null,
+      parsed: null,
+      text: ''
+    }))
+    setOcrItems(prev => [...prev, ...newItems])
+    event.target.value = ''
   }
 
-  const handleOcrRecognize = async () => {
-    if (!ocrFile) return
-
-    setOcrStatus('loading')
-    setOcrMessage('正在加载 OCR 引擎...')
-    setOcrProgress(null)
-    setOcrParsed(null)
-    setOcrText('')
-
-    try {
-      const { createWorker } = await import('tesseract.js')
-      const worker = await createWorker({
-        logger: message => {
-          if (typeof message.progress === 'number') {
-            setOcrProgress(Math.round(message.progress * 100))
-          }
-          if (message.status) {
-            setOcrMessage(`OCR：${message.status}`)
-          }
-        }
-      })
-
-      try {
-        await worker.loadLanguage('eng+chi_sim')
-        await worker.initialize('eng+chi_sim')
-      } catch (error) {
-        await worker.loadLanguage('eng')
-        await worker.initialize('eng')
-      }
-
-      const { data } = await worker.recognize(ocrFile)
-      await worker.terminate()
-
-      const text = data.text ?? ''
-      setOcrText(text)
-
-      const parsed = parseDingTalkText(text, new Date())
-      setOcrParsed(parsed)
-      setOcrStatus('success')
-      setOcrMessage(parsed.isValid ? '识别完成，可直接保存。' : '识别完成，请确认结果。')
-    } catch (error) {
-      setOcrStatus('error')
-      setOcrMessage('识别失败，请更换清晰截图或手动录入。')
-    }
+  const updateOcrItem = (id: string, updates: Partial<OcrItem>) => {
+    setOcrItems(prev =>
+      prev.map(item => (item.id === id ? { ...item, ...updates } : item))
+    )
   }
 
-  const handleApplyParsed = () => {
-    if (!ocrParsed) return
-    setFormData({
-      date: ocrParsed.date,
-      startTime: ocrParsed.startTime || formData.startTime,
-      endTime: ocrParsed.endTime || formData.endTime
+  const removeOcrItem = (id: string) => {
+    setOcrItems(prev => {
+      const target = prev.find(item => item.id === id)
+      if (target) URL.revokeObjectURL(target.previewUrl)
+      return prev.filter(item => item.id !== id)
     })
   }
 
-  const handleSaveParsed = () => {
-    if (!ocrParsed || !ocrParsed.isValid) return
-    addRecord(ocrParsed.date, ocrParsed.startTime, ocrParsed.endTime)
+  const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number) => {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs)
+      promise
+        .then(result => {
+          clearTimeout(timer)
+          resolve(result)
+        })
+        .catch(error => {
+          clearTimeout(timer)
+          reject(error)
+        })
+    })
+  }
+
+  const recognizeOcrItem = async (item: OcrItem) => {
+    updateOcrItem(item.id, {
+      status: 'loading',
+      message: '正在加载 OCR 引擎...',
+      progress: null,
+      parsed: null,
+      text: ''
+    })
+
+    let worker: any = null
+
+    try {
+      const { createWorker } = await import('tesseract.js')
+      worker = await withTimeout(
+        createWorker({
+          logger: message => {
+            if (typeof message.progress === 'number') {
+              updateOcrItem(item.id, { progress: Math.round(message.progress * 100) })
+            }
+            if (message.status) {
+              updateOcrItem(item.id, { message: `OCR：${message.status}` })
+            }
+          }
+        }),
+        15000
+      )
+
+      try {
+        updateOcrItem(item.id, { message: '加载中文识别模型...' })
+        await withTimeout(worker.loadLanguage('eng+chi_sim'), 20000)
+        await withTimeout(worker.initialize('eng+chi_sim'), 15000)
+      } catch (error) {
+        updateOcrItem(item.id, { message: '切换英文识别模型...' })
+        await withTimeout(worker.loadLanguage('eng'), 20000)
+        await withTimeout(worker.initialize('eng'), 15000)
+      }
+
+      updateOcrItem(item.id, { message: '识别中...' })
+      const { data } = await withTimeout(worker.recognize(item.file), 45000)
+
+      const text = data?.text ?? ''
+      const parsed = parseDingTalkText(text, new Date())
+
+      updateOcrItem(item.id, {
+        status: 'success',
+        message: parsed.isValid ? '识别完成，可直接保存。' : '识别完成，请确认结果。',
+        parsed,
+        text
+      })
+    } catch (error) {
+      const errorMessage = error instanceof Error && error.message === 'timeout'
+        ? '识别超时，请换更清晰的截图或稍后重试。'
+        : '识别失败，请更换清晰截图或手动录入。'
+      updateOcrItem(item.id, { status: 'error', message: errorMessage })
+    } finally {
+      if (worker) {
+        await worker.terminate()
+      }
+    }
+  }
+
+  const handleOcrRecognizeAll = async () => {
+    for (const item of ocrItems) {
+      if (item.status === 'loading') continue
+      await recognizeOcrItem(item)
+    }
+  }
+
+  const handleApplyParsed = (parsed: ParsedDingTalkRecord | null) => {
+    if (!parsed) return
+    setFormData({
+      date: parsed.date,
+      startTime: parsed.startTime || formData.startTime,
+      endTime: parsed.endTime || formData.endTime
+    })
+  }
+
+  const handleSaveParsed = (parsed: ParsedDingTalkRecord | null) => {
+    if (!parsed || !parsed.isValid) return
+    addRecord(parsed.date, parsed.startTime, parsed.endTime)
   }
 
   return (
@@ -310,81 +372,115 @@ function App() {
 
         {/* OCR 上传 */}
         <section className="card p-6 animate-slide-up">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-foreground">上传钉钉打卡截图识别</h2>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <h2 className="font-semibold text-foreground">上传钉钉打卡截图识别</h2>
+            </div>
             <span className="text-sm text-muted-foreground">本地识别，不上传服务器</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <div>
-              <label className="block text-sm text-muted-foreground mb-2">截图文件</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleOcrFileChange}
-                className="input-field"
-              />
-            </div>
-            <div className="md:col-span-2 flex flex-col gap-3">
-              <button
-                onClick={handleOcrRecognize}
-                className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={!ocrFile || ocrStatus === 'loading'}
-              >
-                {ocrStatus === 'loading' ? '识别中...' : '开始识别'}
-              </button>
-              {ocrMessage && (
-                <p className="text-sm text-muted-foreground">
-                  {ocrMessage}{ocrProgress !== null ? ` ${ocrProgress}%` : ''}
-                </p>
-              )}
-            </div>
+          <div className="flex flex-col md:flex-row md:items-center gap-3">
+            <input
+              id="ocr-upload"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleOcrFilesChange}
+              className="sr-only"
+            />
+            <label htmlFor="ocr-upload" className="btn-secondary flex items-center justify-center gap-2">
+              <ImageUp className="w-4 h-4" />
+              选择截图
+            </label>
+            <button
+              onClick={handleOcrRecognizeAll}
+              className="btn-primary flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+              disabled={ocrItems.length === 0 || ocrItems.some(item => item.status === 'loading')}
+            >
+              <Sparkles className="w-4 h-4" />
+              识别全部
+            </button>
+            <p className="text-sm text-muted-foreground">支持多图批量识别</p>
           </div>
 
-          {ocrPreviewUrl && (
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-lg border border-border p-3 bg-muted/20">
-                <p className="text-sm text-muted-foreground mb-2">截图预览</p>
-                <img src={ocrPreviewUrl} alt="钉钉打卡截图预览" className="w-full rounded-lg" />
-              </div>
-              <div className="rounded-lg border border-border p-3 bg-muted/20">
-                <p className="text-sm text-muted-foreground mb-2">识别结果</p>
-                {ocrParsed ? (
-                  <div className="space-y-3">
+          {ocrItems.length === 0 ? (
+            <div className="mt-6 rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+              <FileImage className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              选择多张截图后开始识别
+            </div>
+          ) : (
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {ocrItems.map(item => (
+                <div key={item.id} className="rounded-lg border border-border p-4 bg-muted/20 flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <FileImage className="w-4 h-4" />
+                      <span className="truncate">{item.file.name}</span>
+                    </div>
+                    <button
+                      onClick={() => removeOcrItem(item.id)}
+                      className="p-1 rounded-md text-muted-foreground hover:text-danger hover:bg-danger/10"
+                      aria-label="移除截图"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <img
+                    src={item.previewUrl}
+                    alt="钉钉打卡截图预览"
+                    className="w-full rounded-lg object-cover aspect-video"
+                  />
+
+                  <div className="text-xs text-muted-foreground">
+                    {item.message}
+                    {item.progress !== null ? ` ${item.progress}%` : ''}
+                  </div>
+
+                  {item.parsed && (
                     <div className="text-sm">
                       <p className="text-foreground font-medium">
-                        {ocrParsed.date} {ocrParsed.startTime} - {ocrParsed.endTime || '待确认'}
+                        {item.parsed.date} {item.parsed.startTime} - {item.parsed.endTime || '待确认'}
                       </p>
-                      {ocrParsed.warnings.length > 0 && (
-                        <p className="text-warning text-sm mt-1">{ocrParsed.warnings.join(' ')}</p>
+                      {item.parsed.warnings.length > 0 && (
+                        <p className="text-warning text-sm mt-1">{item.parsed.warnings.join(' ')}</p>
                       )}
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <button
-                        onClick={handleApplyParsed}
-                        className="btn-secondary w-full"
-                      >
-                        填充到手动表单
-                      </button>
-                      <button
-                        onClick={handleSaveParsed}
-                        className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-                        disabled={!ocrParsed.isValid}
-                      >
-                        直接保存记录
-                      </button>
-                    </div>
-                    {ocrText && (
-                      <details className="text-xs text-muted-foreground">
-                        <summary className="cursor-pointer">查看 OCR 原文</summary>
-                        <pre className="mt-2 whitespace-pre-wrap">{ocrText}</pre>
-                      </details>
-                    )}
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <button
+                      onClick={() => recognizeOcrItem(item)}
+                      className="btn-secondary w-full flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={item.status === 'loading'}
+                    >
+                      识别
+                    </button>
+                    <button
+                      onClick={() => handleApplyParsed(item.parsed)}
+                      className="btn-secondary w-full"
+                      disabled={!item.parsed}
+                    >
+                      填充表单
+                    </button>
+                    <button
+                      onClick={() => handleSaveParsed(item.parsed)}
+                      className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={!item.parsed?.isValid}
+                    >
+                      保存记录
+                    </button>
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">等待识别结果。</p>
-                )}
-              </div>
+
+                  {item.text && (
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">查看 OCR 原文</summary>
+                      <pre className="mt-2 whitespace-pre-wrap">{item.text}</pre>
+                    </details>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </section>
