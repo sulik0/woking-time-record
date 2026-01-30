@@ -10,7 +10,7 @@ import {
   Target,
   CheckCircle2,
   AlertCircle,
-  ImageUp,
+  Upload,
   Sparkles,
   FileImage,
   X
@@ -390,7 +390,7 @@ function App() {
               className="sr-only"
             />
             <label htmlFor="ocr-upload" className="btn-secondary flex items-center justify-center gap-2">
-              <ImageUp className="w-4 h-4" />
+              <Upload className="w-4 h-4" />
               选择截图
             </label>
             <button
