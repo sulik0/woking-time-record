@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 主色调 - 专业蓝 */
+  --primary: 217 91% 60%;
+  --primary-foreground: 210 40% 98%;
+
+  /* 背景 */
+  --background: 220 14% 96%;
+  --foreground: 222 47% 11%;
+
+  /* 卡片 */
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  /* 次要色 */
+  --secondary: 215 20% 65%;
+  --secondary-foreground: 222 47% 11%;
+
+  /* 强调色 - 紫色渐变 */
+  --accent: 262 83% 58%;
+  --accent-foreground: 210 40% 98%;
+
+  /* 静音色 */
+  --muted: 220 14% 92%;
+  --muted-foreground: 220 9% 46%;
+
+  /* 边框 */
+  --border: 220 13% 91%;
+
+  /* 状态颜色 */
+  --success: 142 71% 45%;
+  --warning: 38 92% 50%;
+  --danger: 0 84% 60%;
+
+  /* 圆角 */
+  --radius: 12px;
+
+  /* 阴影 */
+  --shadow-glow: 0 0 40px hsl(217 91% 60% / 0.15);
+  --shadow-card: 0 4px 20px hsl(220 14% 4% / 0.08);
+
+  /* 渐变 */
+  --gradient-primary: linear-gradient(135deg, hsl(217 91% 60%), hsl(262 83% 58%));
+  --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(220 14% 98%));
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-card text-card-foreground rounded-lg shadow-card border border-border/50;
+  }
+  
+  .card-gradient {
+    @apply bg-gradient-card;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-primary text-primary-foreground px-6 py-3 rounded-lg font-medium 
+           transition-all duration-300 hover:shadow-glow hover:scale-[1.02] active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply bg-secondary/10 text-secondary-foreground px-4 py-2 rounded-lg font-medium 
+           border border-border transition-all duration-200 hover:bg-secondary/20;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 bg-background border border-border rounded-lg 
+           focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary
+           transition-all duration-200;
+  }
+
+  .stat-card {
+    @apply card p-6 relative overflow-hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    @apply absolute top-0 left-0 right-0 h-1 bg-gradient-primary;
+  }
+
+  .progress-bar {
+    @apply h-3 bg-muted rounded-full overflow-hidden;
+  }
+
+  .progress-fill {
+    @apply h-full bg-gradient-primary rounded-full transition-all duration-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-success/10 text-success;
+  }
+
+  .badge-warning {
+    @apply badge bg-warning/10 text-warning;
+  }
+
+  .badge-primary {
+    @apply badge bg-primary/10 text-primary;
+  }
+}
